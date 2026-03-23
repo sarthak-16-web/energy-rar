@@ -1,57 +1,56 @@
-import uuid
-import chromadb
-from sentence_transformers import SentenceTransformer
+from sklearn.feature_extraction.text import TfidfVectorizer
+from sklearn.metrics.pairwise import cosine_similarity
 from groq import Groq
 
-from app.config import GROQ_API_KEY, GROQ_MODEL, CHROMA_DIR, COLLECTION_NAME
+from app.config import GROQ_API_KEY, GROQ_MODEL
 from app.utils import chunk_text
 
-embedding_model = SentenceTransformer("all-MiniLM-L6-v2")
-chroma_client = chromadb.PersistentClient(path=CHROMA_DIR)
-collection = chroma_client.get_or_create_collection(name=COLLECTION_NAME)
 groq_client = Groq(api_key=GROQ_API_KEY)
 
+document_store = {
+    "chunks": [],
+    "vectorizer": None,
+    "matrix": None,
+}
 
-def clear_collection():
-    global collection
 
-    try:
-        chroma_client.delete_collection(COLLECTION_NAME)
-    except Exception:
-        pass
-
-    collection = chroma_client.get_or_create_collection(name=COLLECTION_NAME)
+def clear_store():
+    document_store["chunks"] = []
+    document_store["vectorizer"] = None
+    document_store["matrix"] = None
 
 
 def ingest_document(text: str):
-    clear_collection()
+    clear_store()
 
     chunks = chunk_text(text)
 
     if not chunks:
         raise ValueError("No valid chunks found from the PDF.")
 
-    embeddings = embedding_model.encode(chunks).tolist()
-    ids = [str(uuid.uuid4()) for _ in chunks]
+    vectorizer = TfidfVectorizer(stop_words="english")
+    matrix = vectorizer.fit_transform(chunks)
 
-    collection.add(
-        ids=ids,
-        documents=chunks,
-        embeddings=embeddings,
-        metadatas=[{"source": "uploaded_pdf"} for _ in chunks]
-    )
+    document_store["chunks"] = chunks
+    document_store["vectorizer"] = vectorizer
+    document_store["matrix"] = matrix
 
 
 def retrieve_context(query: str, top_k: int = 4) -> str:
-    query_embedding = embedding_model.encode([query]).tolist()[0]
+    chunks = document_store["chunks"]
+    vectorizer = document_store["vectorizer"]
+    matrix = document_store["matrix"]
 
-    results = collection.query(
-        query_embeddings=[query_embedding],
-        n_results=top_k
-    )
+    if not chunks or vectorizer is None or matrix is None:
+        return ""
 
-    documents = results.get("documents", [[]])[0]
-    return "\n\n".join(documents)
+    query_vector = vectorizer.transform([query])
+    scores = cosine_similarity(query_vector, matrix).flatten()
+
+    top_indices = scores.argsort()[::-1][:top_k]
+    selected_chunks = [chunks[i] for i in top_indices if scores[i] > 0]
+
+    return "\n\n".join(selected_chunks)
 
 
 def answer_question(question: str) -> str:
@@ -85,7 +84,7 @@ Question:
                 "content": prompt
             }
         ],
-        temperature=0.1
+        temperature=0.1,
     )
 
     return response.choices[0].message.content.strip()
