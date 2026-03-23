@@ -3,7 +3,7 @@ from fastapi import FastAPI, UploadFile, File, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 
-from app.config import UPLOAD_DIR, CHROMA_DIR
+from app.config import UPLOAD_DIR
 from app.utils import extract_text_from_pdf
 from app.rag import ingest_document, answer_question
 
@@ -18,7 +18,6 @@ app.add_middleware(
 )
 
 os.makedirs(UPLOAD_DIR, exist_ok=True)
-os.makedirs(CHROMA_DIR, exist_ok=True)
 
 
 class QuestionRequest(BaseModel):
